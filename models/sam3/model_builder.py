@@ -33,11 +33,23 @@ def build_sam3_image_model(
 
     try:
         from sam3.model_builder import build_sam3_image_model as official_build
+        from sam3.model import vitdet as sam3_vitdet
     except ImportError as error:
         raise ImportError(
             "The official 'sam3' package is required to load a SAM 3.1 checkpoint. "
             "Use use_mock=True only for development and shape checks."
         ) from error
+
+    # SAM 3's fused addmm_act is inference-only and hard-casts intermediates to
+    # bfloat16. Its next Linear can then receive BF16 input with FP32 weights,
+    # and the fused op also rejects autograd during fine-tuning. Use the
+    # mathematically equivalent PyTorch path for HPMA build/train/eval.
+    def autograd_safe_addmm_act(activation, linear, inputs):
+        activation_module = activation() if isinstance(activation, type) else activation
+        return activation_module(linear(inputs))
+
+    if hasattr(sam3_vitdet, "addmm_act"):
+        sam3_vitdet.addmm_act = autograd_safe_addmm_act
 
     print(f"[*] Loading official SAM 3.1 weights from {checkpoint_path}")
     return official_build(checkpoint_path=checkpoint_path)

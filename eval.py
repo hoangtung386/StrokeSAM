@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from data.factory import build_dataset
 from memory.prototype_bank import PrototypeMemoryBank
 from models.hpma_model import HPMAModel
+from utils.device import resolve_device
 from utils.metrics import SegmentationMetrics
 
 
@@ -26,9 +27,9 @@ def evaluate_dataset(
     metric_calc = SegmentationMetrics(num_classes=num_classes)
 
     for batch in dataloader:
-        images = batch["image"].to(device)
-        gt_masks = batch["mask"].to(device)
-        labels = batch["label"].to(device)
+        images = batch["image"].to(device, non_blocking=True)
+        gt_masks = batch["mask"].to(device, non_blocking=True)
+        labels = batch["label"].to(device, non_blocking=True)
         outputs = model(images)
         pred_masks = outputs["pred_masks"]
 
@@ -51,7 +52,7 @@ def main() -> None:
         data_cfg = yaml.safe_load(f)
 
     requested_device = base_cfg["system"].get("device", "cuda")
-    device = requested_device if requested_device != "cuda" or torch.cuda.is_available() else "cpu"
+    device = resolve_device(requested_device)
     print(
         f"[*] Evaluating HPMA on {data_cfg['dataset']['name']} "
         f"split={args.split} ({device}) ..."
@@ -70,6 +71,7 @@ def main() -> None:
         batch_size=1,
         shuffle=False,
         num_workers=base_cfg["system"]["num_workers"],
+        pin_memory=device.type == "cuda",
     )
 
     checkpoint_payload = torch.load(args.checkpoint, map_location="cpu", weights_only=True)

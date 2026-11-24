@@ -63,7 +63,9 @@ class PrototypeMemoryBuilder:
             labels: Category indices of shape [B, N_obj].
             eps: Epsilon to prevent division by zero.
         """
-        images = images.to(self.device)
+        images = images.to(self.device, non_blocking=True)
+        masks = masks.to(self.device, non_blocking=True)
+        labels = labels.to(self.device, non_blocking=True)
         feats = self.vision_encoder(images)
 
         if isinstance(feats, dict) and "fpn_features" in feats:

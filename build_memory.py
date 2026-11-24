@@ -10,6 +10,7 @@ from data.factory import build_dataset
 from memory.builder import PrototypeMemoryBuilder
 from memory.prototype_bank import PrototypeMemoryBank
 from models.sam3.model_builder import build_sam3_image_model
+from utils.device import resolve_device
 
 
 def main() -> None:
@@ -35,7 +36,7 @@ def main() -> None:
         base_cfg = yaml.safe_load(f)
 
     requested_device = base_cfg["system"].get("device", "cuda")
-    device = requested_device if requested_device != "cuda" or torch.cuda.is_available() else "cpu"
+    device = resolve_device(requested_device)
     print(f"[*] Building Prototype Memory Bank for {cfg['dataset']['name']} on {device}")
 
     # 1. Initialize dataset
@@ -52,6 +53,7 @@ def main() -> None:
         batch_size=base_cfg["training"]["batch_size"],
         shuffle=False,
         num_workers=base_cfg["system"]["num_workers"],
+        pin_memory=device.type == "cuda",
     )
 
     # 2. Load frozen SAM 3.1 backbone
@@ -66,7 +68,7 @@ def main() -> None:
         num_classes=cfg["dataset"]["num_classes"],
         num_prototypes=base_cfg["model"]["num_prototypes_k"],
         dim=base_cfg["model"]["feature_dim"],
-        device=device,
+        device=str(device),
     )
 
     print(f"[*] Extracting FPN features across {len(dataset)} samples ...")

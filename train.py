@@ -14,6 +14,7 @@ from data.factory import build_dataset
 from losses.total_loss import HPMATotalLoss
 from memory.prototype_bank import PrototypeMemoryBank
 from models.hpma_model import HPMAModel
+from utils.device import resolve_device
 from utils.logger import SimpleLogger
 from utils.metrics import SegmentationMetrics
 from utils.optimizer import build_hpma_optimizer
@@ -36,9 +37,9 @@ def train_one_epoch(
     optimizer.zero_grad()
 
     for step, batch in enumerate(dataloader):
-        images = batch["image"].to(device)
-        gt_masks = batch["mask"].to(device)
-        labels = batch["label"].to(device)
+        images = batch["image"].to(device, non_blocking=True)
+        gt_masks = batch["mask"].to(device, non_blocking=True)
+        labels = batch["label"].to(device, non_blocking=True)
         with torch.autocast(
             device_type=torch.device(device).type,
             enabled=mixed_precision and torch.device(device).type == "cuda",
@@ -142,9 +143,9 @@ def evaluate_one_epoch(
     model.eval()
     metrics = SegmentationMetrics(num_classes=num_classes)
     for batch in dataloader:
-        images = batch["image"].to(device)
-        masks = batch["mask"].to(device)
-        labels = batch["label"].to(device)
+        images = batch["image"].to(device, non_blocking=True)
+        masks = batch["mask"].to(device, non_blocking=True)
+        labels = batch["label"].to(device, non_blocking=True)
         predictions = model(images)["pred_masks"]
         metrics.update(predictions, masks, labels)
     return metrics.compute()
@@ -164,7 +165,7 @@ def main() -> None:
     seed = base_cfg["system"]["seed"]
     set_random_seed(seed)
     requested_device = base_cfg["system"].get("device", "cuda")
-    device = requested_device if requested_device != "cuda" or torch.cuda.is_available() else "cpu"
+    device = resolve_device(requested_device)
     print(f"[*] Starting HPMA Training pipeline on device: {device}")
 
     # Datasets
@@ -187,6 +188,7 @@ def main() -> None:
         shuffle=case_sampler is None,
         sampler=case_sampler,
         num_workers=base_cfg["system"]["num_workers"],
+        pin_memory=device.type == "cuda",
         generator=torch.Generator().manual_seed(seed),
     )
     validation_dataset = build_dataset(
@@ -202,6 +204,7 @@ def main() -> None:
         batch_size=1,
         shuffle=False,
         num_workers=base_cfg["system"]["num_workers"],
+        pin_memory=device.type == "cuda",
     )
 
     # Memory Bank

@@ -1,0 +1,8 @@
+# Legacy EndoVis 2018 binary foreground segmentation configuration.
+dataset:
+  name: "EndoVis2018"
+  data_root: "dataset/EndoVis2018"
+  num_classes: 1
+
+memory:
+  bank_path: "memory/bank_cache/endovis2018_bank.pt"

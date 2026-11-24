@@ -13,6 +13,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.cluster import KMeans
 
+from models.sam3.features import extract_image_fpn_features
+
 
 class PrototypeMemoryBuilder:
     """Builder for multi-scale frozen prototype bank."""
@@ -66,14 +68,7 @@ class PrototypeMemoryBuilder:
         images = images.to(self.device, non_blocking=True)
         masks = masks.to(self.device, non_blocking=True)
         labels = labels.to(self.device, non_blocking=True)
-        feats = self.vision_encoder(images)
-
-        if isinstance(feats, dict) and "fpn_features" in feats:
-            fpn_feats = feats["fpn_features"]
-        elif isinstance(feats, (list, tuple)):
-            fpn_feats = feats
-        else:
-            raise ValueError("Vision encoder output does not contain valid FPN features.")
+        fpn_feats = extract_image_fpn_features(self.vision_encoder, images)
 
         # fpn_feats[0]: local [B, D, 288, 288]
         # fpn_feats[1]: struct [B, D, 144, 144]

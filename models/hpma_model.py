@@ -10,6 +10,7 @@ from memory.prototype_bank import PrototypeMemoryBank
 from models.adapters.global_adapter import GlobalVisualAdapter, VisualTokenGenerator
 from models.adapters.local_adapter import LocalProjectionAdapter
 from models.adapters.structural_adapter import StructuralQueryAdapter
+from models.sam3.features import extract_image_fpn_features
 from models.sam3.model_builder import build_sam3_image_model
 
 
@@ -172,18 +173,7 @@ class HPMAModel(nn.Module):
         images: torch.Tensor,
         encoder: nn.Module,
     ) -> List[torch.Tensor]:
-        features = encoder(images)
-        if isinstance(features, dict) and "fpn_features" in features:
-            fpn_features = features["fpn_features"]
-        elif isinstance(features, (list, tuple)):
-            fpn_features = features
-        else:
-            raise ValueError(f"Unexpected vision encoder output type: {type(features).__name__}.")
-        if len(fpn_features) < 3:
-            raise ValueError(
-                "The image encoder must return local, structural, and global FPN maps."
-            )
-        return fpn_features[:3]
+        return extract_image_fpn_features(encoder, images)
 
     def forward(self, images: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Predict a mask using image pixels and the model's frozen memory bank."""

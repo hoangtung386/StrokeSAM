@@ -3,6 +3,7 @@
 import argparse
 
 import torch
+import torch.nn as nn
 import yaml
 from torch.utils.data import DataLoader
 
@@ -10,6 +11,7 @@ from data.factory import build_dataset
 from memory.builder import PrototypeMemoryBuilder
 from memory.prototype_bank import PrototypeMemoryBank
 from models.sam3.model_builder import build_sam3_image_model
+from models.sam3.features import ImageOnlySAM3Encoder
 from utils.device import resolve_device
 
 
@@ -37,6 +39,10 @@ def main() -> None:
 
     requested_device = base_cfg["system"].get("device", "cuda")
     device = resolve_device(requested_device)
+    use_data_parallel = base_cfg["system"].get("use_data_parallel", False)
+    device_ids = list(range(torch.cuda.device_count())) if use_data_parallel else []
+    if use_data_parallel and len(device_ids) < 2:
+        raise RuntimeError("DataParallel is enabled, but fewer than two CUDA devices are visible.")
     print(f"[*] Building Prototype Memory Bank for {cfg['dataset']['name']} on {device}")
 
     # 1. Initialize dataset
@@ -59,8 +65,14 @@ def main() -> None:
     # 2. Load frozen SAM 3.1 backbone
     sam_checkpoint = args.sam3_checkpoint or base_cfg["model"]["sam3_checkpoint"]
     sam_model = build_sam3_image_model(checkpoint_path=sam_checkpoint)
-    vision_encoder = sam_model.backbone
+    vision_encoder: nn.Module = ImageOnlySAM3Encoder(sam_model.backbone)
     del sam_model
+    if use_data_parallel:
+        vision_encoder = nn.DataParallel(
+            vision_encoder,
+            device_ids=device_ids,
+            output_device=0,
+        )
 
     # 3. Build prototypes
     builder = PrototypeMemoryBuilder(

@@ -10,6 +10,7 @@ from memory.prototype_bank import PrototypeMemoryBank
 from models.adapters.global_adapter import GlobalVisualAdapter, VisualTokenGenerator
 from models.adapters.local_adapter import LocalProjectionAdapter
 from models.adapters.structural_adapter import StructuralQueryAdapter
+from models.hpma_heads import HPMAFusionEncoder, HPMAMaskDecoder, HPMASegmentationHead
 from models.sam3.features import extract_image_fpn_features
 from models.sam3.model_builder import build_sam3_image_model
 
@@ -66,15 +67,25 @@ class HPMAModel(nn.Module):
             use_mock=use_mock_sam3,
         )
         self.vision_encoder = sam_model.backbone
-        self.fusion_encoder = getattr(sam_model, "fusion_encoder", None)
-        if not hasattr(sam_model, "mask_decoder"):
-            raise AttributeError("SAM model is missing the 'mask_decoder' sub-module.")
-        self.transformer_decoder = sam_model.mask_decoder
-        self.segmentation_head = getattr(
-            sam_model,
-            "segmentation_head",
-            getattr(self.transformer_decoder, "conv_out", None),
+        has_hpma_decoder_api = all(
+            hasattr(sam_model, attribute)
+            for attribute in ("fusion_encoder", "mask_decoder", "segmentation_head")
         )
+        if has_hpma_decoder_api:
+            self.fusion_encoder = sam_model.fusion_encoder
+            self.transformer_decoder = sam_model.mask_decoder
+            self.segmentation_head = sam_model.segmentation_head
+            self._freeze_segmentation_head = True
+            self._freeze_fusion_encoder = True
+        else:
+            # The official SAM 3 image model exposes a text/geometry-conditioned
+            # transformer API rather than the image-only HPMA decoder contract.
+            # Keep its pretrained visual backbone and attach trainable HPMA heads.
+            self.fusion_encoder = HPMAFusionEncoder(feature_dim=feature_dim)
+            self.transformer_decoder = HPMAMaskDecoder(feature_dim=feature_dim)
+            self.segmentation_head = HPMASegmentationHead(feature_dim=feature_dim)
+            self._freeze_segmentation_head = False
+            self._freeze_fusion_encoder = False
 
         # Keep only image-path modules from the full SAM container.
         del sam_model
@@ -121,14 +132,17 @@ class HPMAModel(nn.Module):
         """Freeze SAM image modules, then unfreeze configured final blocks."""
         for parameter in self.vision_encoder.parameters():
             parameter.requires_grad = False
-        if self.fusion_encoder is not None:
+        if self.fusion_encoder is not None and self._freeze_fusion_encoder:
             for parameter in self.fusion_encoder.parameters():
                 parameter.requires_grad = False
-        if self.segmentation_head is not None:
+        if self.segmentation_head is not None and self._freeze_segmentation_head:
             for parameter in self.segmentation_head.parameters():
                 parameter.requires_grad = False
 
         trunk = getattr(self.vision_encoder, "trunk", None)
+        if trunk is None:
+            visual_backbone = getattr(self.vision_encoder, "vision_backbone", None)
+            trunk = getattr(visual_backbone, "trunk", None)
         blocks = getattr(trunk, "blocks", None)
         self._trainable_vision_blocks = []
         if blocks is not None and unfreeze_vision_blocks > 0:
@@ -139,7 +153,14 @@ class HPMAModel(nn.Module):
 
         fusion_layers = getattr(self.fusion_encoder, "layers", None)
         self._trainable_fusion_layers = []
-        if fusion_layers is not None and unfreeze_fusion_layers > 0:
+        if fusion_layers is not None and not self._freeze_fusion_encoder:
+            self._trainable_fusion_layers = list(fusion_layers)
+            for layer in self._trainable_fusion_layers:
+                for parameter in layer.parameters():
+                    parameter.requires_grad = True
+            for parameter in self.fusion_encoder.parameters():
+                parameter.requires_grad = True
+        elif fusion_layers is not None and unfreeze_fusion_layers > 0:
             self._trainable_fusion_layers = list(fusion_layers[-unfreeze_fusion_layers:])
             for layer in self._trainable_fusion_layers:
                 for parameter in layer.parameters():
@@ -147,7 +168,7 @@ class HPMAModel(nn.Module):
 
         for parameter in self.transformer_decoder.parameters():
             parameter.requires_grad = True
-        if self.segmentation_head is not None:
+        if self.segmentation_head is not None and self._freeze_segmentation_head:
             for parameter in self.segmentation_head.parameters():
                 parameter.requires_grad = False
 
@@ -159,12 +180,12 @@ class HPMAModel(nn.Module):
             for block in self._trainable_vision_blocks:
                 block.train()
 
-            if self.fusion_encoder is not None:
+            if self.fusion_encoder is not None and self._freeze_fusion_encoder:
                 self.fusion_encoder.eval()
                 for layer in self._trainable_fusion_layers:
                     layer.train()
 
-            if self.segmentation_head is not None:
+            if self.segmentation_head is not None and self._freeze_segmentation_head:
                 self.segmentation_head.eval()
         return self
 

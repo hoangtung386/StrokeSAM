@@ -6,6 +6,7 @@ Computes 2D segmentation metrics without passing labels to the model.
 import argparse
 
 import torch
+import torch.nn as nn
 import yaml
 from torch.utils.data import DataLoader
 
@@ -53,6 +54,10 @@ def main() -> None:
 
     requested_device = base_cfg["system"].get("device", "cuda")
     device = resolve_device(requested_device)
+    use_data_parallel = base_cfg["system"].get("use_data_parallel", False)
+    device_ids = list(range(torch.cuda.device_count())) if use_data_parallel else []
+    if use_data_parallel and len(device_ids) < 2:
+        raise RuntimeError("DataParallel is enabled, but fewer than two CUDA devices are visible.")
     print(
         f"[*] Evaluating HPMA on {data_cfg['dataset']['name']} "
         f"split={args.split} ({device}) ..."
@@ -68,7 +73,7 @@ def main() -> None:
     )
     evaluation_loader = DataLoader(
         evaluation_dataset,
-        batch_size=1,
+        batch_size=(len(device_ids) if use_data_parallel else 1),
         shuffle=False,
         num_workers=base_cfg["system"]["num_workers"],
         pin_memory=device.type == "cuda",
@@ -121,6 +126,8 @@ def main() -> None:
         unfreeze_fusion_layers=base_cfg["model"].get("unfreeze_fusion_layers", 2),
     ).to(device)
     model.load_state_dict(checkpoint)
+    if use_data_parallel:
+        model = nn.DataParallel(model, device_ids=device_ids, output_device=0)
 
     results = evaluate_dataset(
         model=model,

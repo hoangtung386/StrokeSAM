@@ -31,3 +31,14 @@ def extract_image_fpn_features(
             f"received {len(fpn_features)} map(s)."
         )
     return list(fpn_features[:3])
+
+
+class ImageOnlySAM3Encoder(nn.Module):
+    """Expose SAM 3's image-only backbone path as a DataParallel module."""
+
+    def __init__(self, backbone: nn.Module) -> None:
+        super().__init__()
+        self.backbone = backbone
+
+    def forward(self, images: torch.Tensor) -> List[torch.Tensor]:
+        return extract_image_fpn_features(self.backbone, images)

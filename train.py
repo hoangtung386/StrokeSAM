@@ -7,6 +7,7 @@ from typing import Optional
 
 import numpy as np
 import torch
+import torch.nn as nn
 import yaml
 from torch.utils.data import DataLoader
 
@@ -18,6 +19,11 @@ from utils.device import resolve_device
 from utils.logger import SimpleLogger
 from utils.metrics import SegmentationMetrics
 from utils.optimizer import build_hpma_optimizer
+
+
+def unwrap_model(model: nn.Module) -> HPMAModel:
+    """Return the underlying HPMA module when DataParallel is enabled."""
+    return model.module if isinstance(model, nn.DataParallel) else model
 
 
 def train_one_epoch(
@@ -33,6 +39,7 @@ def train_one_epoch(
     if accumulation_steps < 1:
         raise ValueError("accumulation_steps must be positive.")
     model.train()
+    base_model = unwrap_model(model)
     total_loss = 0.0
     optimizer.zero_grad()
 
@@ -50,7 +57,7 @@ def train_one_epoch(
                 outputs["high_res_features"],
                 gt_masks,
                 labels,
-                model.prototype_bank.local_prototypes,
+                base_model.prototype_bank.local_prototypes,
             )
         group_start = (step // accumulation_steps) * accumulation_steps
         group_size = min(accumulation_steps, len(dataloader) - group_start)
@@ -166,7 +173,18 @@ def main() -> None:
     set_random_seed(seed)
     requested_device = base_cfg["system"].get("device", "cuda")
     device = resolve_device(requested_device)
+    use_data_parallel = base_cfg["system"].get("use_data_parallel", False)
+    device_ids = list(range(torch.cuda.device_count())) if use_data_parallel else []
+    if use_data_parallel and len(device_ids) < 2:
+        raise RuntimeError("DataParallel is enabled, but fewer than two CUDA devices are visible.")
+    if use_data_parallel and base_cfg["training"]["batch_size"] < len(device_ids):
+        raise ValueError(
+            "Global batch_size must be at least the number of DataParallel devices."
+        )
     print(f"[*] Starting HPMA Training pipeline on device: {device}")
+    if use_data_parallel:
+        print(f"[*] DataParallel on CUDA devices {device_ids}; global batch size="
+              f"{base_cfg['training']['batch_size']}")
 
     # Datasets
     train_dataset = build_dataset(
@@ -201,7 +219,7 @@ def main() -> None:
     )
     validation_loader = DataLoader(
         validation_dataset,
-        batch_size=1,
+        batch_size=(len(device_ids) if use_data_parallel else 1),
         shuffle=False,
         num_workers=base_cfg["system"]["num_workers"],
         pin_memory=device.type == "cuda",
@@ -217,7 +235,7 @@ def main() -> None:
     validate_memory_bank(memory_bank, data_cfg["dataset"], base_cfg, train_dataset)
 
     # Model
-    model = HPMAModel(
+    base_model = HPMAModel(
         sam3_checkpoint_path=base_cfg["model"]["sam3_checkpoint"],
         feature_dim=base_cfg["model"]["feature_dim"],
         num_classes=data_cfg["dataset"]["num_classes"],
@@ -227,15 +245,18 @@ def main() -> None:
         unfreeze_vision_blocks=base_cfg["model"].get("unfreeze_vision_blocks", 4),
         unfreeze_fusion_layers=base_cfg["model"].get("unfreeze_fusion_layers", 2),
     ).to(device)
+    model: nn.Module = base_model
+    if use_data_parallel:
+        model = nn.DataParallel(base_model, device_ids=device_ids, output_device=0)
 
     # Loss & Optimizer
     criterion = HPMATotalLoss(
         lambda_align=base_cfg["training"]["loss_weights"]["lambda_align"],
-        local_adapter=model.local_adapter,
+        local_adapter=base_model.local_adapter,
     ).to(device)
 
     optimizer = build_hpma_optimizer(
-        model=model,
+        model=base_model,
         base_lr=base_cfg["training"]["learning_rate"]["base"],
         vision_lr=base_cfg["training"]["learning_rate"]["vision_backbone"],
         weight_decay=base_cfg["training"]["weight_decay"],
@@ -281,13 +302,13 @@ def main() -> None:
         if validation_metrics["mdice"] > best_validation_dice:
             best_validation_dice = validation_metrics["mdice"]
             torch.save(
-                {"state_dict": model.state_dict(), "metadata": model_metadata},
+                {"state_dict": base_model.state_dict(), "metadata": model_metadata},
                 f"{output_stem}_best.pt",
             )
 
     # Save final model
     save_path = f"{output_stem}_last.pt"
-    torch.save({"state_dict": model.state_dict(), "metadata": model_metadata}, save_path)
+    torch.save({"state_dict": base_model.state_dict(), "metadata": model_metadata}, save_path)
     print(f"[✓] Training complete. Model weights saved to {save_path}")
 
 

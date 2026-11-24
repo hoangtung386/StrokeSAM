@@ -28,8 +28,8 @@ def build_dataset(
             target_size=target_size,
             modalities=tuple(dataset_config.get("channels", ISLES2DDataset.modalities)),
             seed=seed,
-            validation_fraction=dataset_config.get("validation_fraction", 0.15),
-            test_fraction=dataset_config.get("test_fraction", 0.15),
+            validation_fraction=dataset_config.get("validation_fraction", 0.10),
+            test_fraction=dataset_config.get("test_fraction", 0.10),
         )
     return EndoVisDataset(
         data_root=data_root,

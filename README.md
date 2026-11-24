@@ -21,7 +21,7 @@ ISLES-2022, represented as `[DWI, ADC, FLAIR]` image channels. EndoVis loaders r
 
 Inference uses `model(images)`. Labels and masks are used only for memory construction, training losses, and metrics. The image-only path has no text encoder or text prompt.
 
-The ISLES loader canonicalizes orientation, resamples ADC, FLAIR, and masks to the DWI grid as needed, then creates deterministic train/validation/test splits by case (70/15/15 by default). Slices from one case cannot cross splits.
+The ISLES loader canonicalizes orientation, resamples ADC, FLAIR, and masks to the DWI grid as needed, then creates deterministic train/validation/test splits by case (80/10/10 by default). Slices from one case cannot cross splits. Training evaluates validation mDice each epoch and saves the best-validation checkpoint; use the test split only for final reporting after model selection.
 
 ---
 

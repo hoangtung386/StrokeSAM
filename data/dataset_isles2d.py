@@ -50,8 +50,8 @@ class ISLES2DDataset(Dataset):
         target_size: Tuple[int, int] = (1008, 1008),
         modalities: Tuple[str, ...] = ("dwi", "adc", "FLAIR"),
         seed: int = 42,
-        validation_fraction: float = 0.15,
-        test_fraction: float = 0.15,
+        validation_fraction: float = 0.10,
+        test_fraction: float = 0.10,
         cache_cases: int = 1,
     ) -> None:
         if split not in {"train", "val", "test"}:

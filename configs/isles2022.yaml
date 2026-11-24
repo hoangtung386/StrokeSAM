@@ -1,0 +1,11 @@
+# ISLES-2022 binary lesion segmentation with case-level 2D splits.
+dataset:
+  name: "ISLES-2022"
+  data_root: "dataset/ISLES-2022"
+  channels: [dwi, adc, FLAIR]
+  num_classes: 1
+  validation_fraction: 0.15
+  test_fraction: 0.15
+
+memory:
+  bank_path: "memory/bank_cache/isles2022_bank.pt"

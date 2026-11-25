@@ -19,18 +19,20 @@ class FocalLoss(nn.Module):
         self.gamma = gamma
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        inputs = inputs.float()
-        targets = targets.float()
-        p = inputs
-        ce_loss = F.binary_cross_entropy(inputs, targets, reduction="none")
-        p_t = p * targets + (1 - p) * (1 - targets)
-        loss = ce_loss * ((1 - p_t) ** self.gamma)
+        # F.binary_cross_entropy is forbidden under autocast (even with fp32
+        # inputs), so run this loss in full precision outside the autocast region.
+        with torch.autocast(device_type=inputs.device.type, enabled=False):
+            p = inputs.float().clamp(1e-7, 1.0 - 1e-7)
+            targets = targets.float()
+            ce_loss = F.binary_cross_entropy(p, targets, reduction="none")
+            p_t = p * targets + (1 - p) * (1 - targets)
+            loss = ce_loss * ((1 - p_t) ** self.gamma)
 
-        if self.alpha >= 0:
-            alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
-            loss = alpha_t * loss
+            if self.alpha >= 0:
+                alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+                loss = alpha_t * loss
 
-        return loss.mean()
+            return loss.mean()
 
 
 class DiceLoss(nn.Module):
